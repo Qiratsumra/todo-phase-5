@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: todo-frontend-ingress
+  namespace: todo-app
+  annotations:
+    # This annotation tells NGINX how to handle the pathing
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  # This links the Ingress to the minikube addon you enabled
+  ingressClassName: nginx
+  rules:
+  - host: frontend.todoapp.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: todo-frontend
+            port:
+              number: 80
