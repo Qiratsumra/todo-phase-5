@@ -1,0 +1,68 @@
+# Dapr Pub/Sub Component for Kafka
+# This component enables event-driven messaging via Kafka topics
+# Used for: task-events, reminders, task-updates topics
+
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: kafka-pubsub
+  namespace: todo-app
+spec:
+  type: pubsub.kafka
+  version: v1
+  metadata:
+    # Kafka broker addresses (comma-separated for multiple brokers)
+    # Local development: Strimzi Kafka on Minikube
+    # Production: Redpanda Cloud Serverless
+    - name: brokers
+      value: "my-cluster-kafka-bootstrap.kafka:9092"
+
+    # Consumer group for this application
+    # Each service should have its own consumer group
+    - name: consumerGroup
+      value: "taskflow-consumer-group"
+
+    # Producer configuration
+    - name: maxMessageBytes
+      value: "1024"
+
+    # Authentication type
+    # Local: none (no auth required for Strimzi ephemeral)
+    # Production: sasl (SASL authentication for Redpanda Cloud)
+    - name: authType
+      value: "none"
+
+    # SASL configuration (for production Redpanda Cloud)
+    # Uncomment and configure when deploying to cloud
+    # - name: saslUsername
+    #   value: "${REDPANDA_USERNAME}"
+    # - name: saslPassword
+    #   value: "${REDPANDA_PASSWORD}"
+    # - name: saslMechanism
+    #   value: "SCRAM-SHA-256"
+
+    # TLS configuration (for production)
+    # - name: tls
+    #   value: "true"
+
+    # Topic replication factor
+    # Set to 1 for local development (single broker)
+    # Set to 3 for production (multi-broker cluster)
+    - name: replicationFactor
+      value: "1"
+
+    # Queue configuration
+    - name: queueName
+      value: "taskflow-queue"
+
+    # Disable topic creation (topics managed by Strimzi/Redpanda)
+    - name: disableTopicCreation
+      value: "true"
+
+# Scopes define which applications can use this component
+# Comment out scopes to make component available to all apps
+scopes:
+  - backend-api
+  - recurring-task-service
+  - notification-service
+  - audit-service

@@ -1,8 +1,8 @@
-# Default values for todo-backend
-replicaCount: 2
+# Default values for todo-recurring-service
+replicaCount: 1
 
 image:
-  repository: todo-backend
+  repository: todo-recurring-service
   pullPolicy: IfNotPresent
   tag: "v1.0.0"
 
@@ -18,17 +18,17 @@ serviceAccount:
 
 podAnnotations: {}
 podLabels:
-  app: todo-backend
+  app: todo-recurring-service
   version: v1.0.0
-  component: api
+  component: recurring-task
 
 # Dapr sidecar configuration
 dapr:
   enabled: true
-  appId: "taskflow-backend"
-  appPort: 8000
+  appId: "taskflow-recurring"
+  appPort: 8001
   httpPort: 3500
-  grpcPort: 50001
+  grpcPort: 50002
   logLevel: "info"
   config: "taskflow-dapr-config"
   enableProfiling: false
@@ -37,7 +37,7 @@ dapr:
     tag: "1.14.0"
   resources:
     limits:
-      cpu: 500m
+      cpu: 300m
       memory: 256Mi
     requests:
       cpu: 100m
@@ -48,6 +48,13 @@ daprComponents:
   pubsub: "kafka-pubsub"
   stateStore: "statestore"
   secrets: "kubernetes-secrets"
+
+# Pub/Sub subscription configuration
+subscription:
+  enabled: true
+  topic: "task-events"
+  routes:
+    taskCompleted: "/api/events/task-completed"
 
 podSecurityContext:
   runAsNonRoot: true
@@ -63,24 +70,24 @@ securityContext:
 
 service:
   type: ClusterIP
-  port: 8000
-  targetPort: 8000
+  port: 8001
+  targetPort: 8001
 
 ingress:
   enabled: false
 
 resources:
   limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 250m
+    cpu: 300m
     memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
 
 livenessProbe:
   httpGet:
     path: /health
-    port: 8000
+    port: 8001
   initialDelaySeconds: 15
   periodSeconds: 10
   timeoutSeconds: 5
@@ -89,7 +96,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /health
-    port: 8000
+    port: 8001
   initialDelaySeconds: 10
   periodSeconds: 5
   timeoutSeconds: 3
@@ -97,21 +104,25 @@ readinessProbe:
 
 autoscaling:
   enabled: true
-  minReplicas: 2
-  maxReplicas: 10
+  minReplicas: 1
+  maxReplicas: 5
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
 # Environment variables from ConfigMap
 config:
-  port: "8000"
+  port: "8001"
   logLevel: "info"
-  corsOrigins: "*"
 
 # Secrets will be created externally
 secrets:
   enabled: true
   name: backend-secrets
+
+# Backend API configuration for service invocation
+backendService:
+  name: "taskflow-backend"
+  namespace: "default"
 
 volumes: []
 volumeMounts: []

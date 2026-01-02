@@ -1,0 +1,101 @@
+# ========================================================================
+# cert-manager Configuration for TLS Certificates
+# ========================================================================
+# This configures cert-manager to automatically provision TLS certificates
+# for TaskFlow using Let's Encrypt or OCI Certificate Service.
+#
+# Apply with: kubectl apply -f k8s/monitoring/cert-manager.yaml
+# ========================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    app: cert-manager
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  namespace: cert-manager
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${{ secrets.LETSENCRYPT_EMAIL }}
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+      - dns01:
+          route53:
+            region: ${{ secrets.AWS_REGION }}
+            hostedZoneID: ${{ secrets.AWS_HOSTED_ZONE_ID }}
+            secretAccessKeySecretRef:
+              name: route53-credentials
+              key: secret-access-key
+            accessKeyIDSecretRef:
+              name: route53-credentials
+              key: access-key-id
+
+---
+# Alternative: OCI Certificate Authority issuer
+# Uncomment and configure for OCI Certificate Service
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: oci-ca-issuer
+# spec:
+#   ca:
+#     secretName: oci-ca-secret
+# ---
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: oci-ca-secret
+#   namespace: cert-manager
+# type: Opaque
+# stringData:
+#   tls.crt: ${{ secrets.OCI_CA_CERT }}
+#   tls.key: ${{ secrets.OCI_CA_KEY }}
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: taskflow-tls
+  namespace: todo-app
+spec:
+  secretName: taskflow-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - ${{ secrets.DOMAIN_NAME }}
+    - www.${{ secrets.DOMAIN_NAME }}
+  acme:
+    config:
+      - dns01:
+          provider: route53
+        domains:
+          - ${{ secrets.DOMAIN_NAME }}
+      - http01:
+          ingressClass: nginx
+        domains:
+          - www.${{ secrets.DOMAIN_NAME }}
+
+---
+# ========================================================================
+# cert-manager Helm installation (run once)
+# ========================================================================
+# helm repo add jetstack https://charts.jetstack.io
+# helm repo update
+# helm install cert-manager jetstack/cert-manager \
+#   --namespace cert-manager \
+#   --create-namespace \
+#   --version v1.13.0 \
+#   --set installCRDs=true

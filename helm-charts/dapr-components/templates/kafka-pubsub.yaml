@@ -1,0 +1,55 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: kafka-pubsub
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "dapr-components.labels" . | nindent 4 }}
+spec:
+  type: pubsub.kafka
+  version: v1
+  metadata:
+    {{- if eq .Values.kafka.environment "cloud" }}
+    - name: brokers
+      value: {{ .Values.kafka.brokers.cloud | quote }}
+    {{- else }}
+    - name: brokers
+      value: {{ .Values.kafka.brokers.local | quote }}
+    {{- end }}
+
+    - name: consumerGroup
+      value: {{ .Values.kafka.consumerGroup | quote }}
+
+    - name: maxMessageBytes
+      value: "1024"
+
+    - name: authType
+      value: {{ .Values.kafka.authType | quote }}
+
+    {{- if eq .Values.kafka.authType "sasl" }}
+    - name: saslUsername
+      value: {{ .Values.kafka.saslUsername | quote }}
+    - name: saslPassword
+      value: {{ .Values.kafka.saslPassword | quote }}
+    - name: saslMechanism
+      value: {{ .Values.kafka.saslMechanism | quote }}
+    {{- end }}
+
+    {{- if .Values.kafka.tlsEnabled }}
+    - name: tls
+      value: {{ .Values.kafka.tlsEnabled | quote }}
+    {{- end }}
+
+    - name: replicationFactor
+      value: {{ .Values.kafka.replicationFactor | quote }}
+
+    - name: queueName
+      value: {{ .Values.kafka.queueName | quote }}
+
+    - name: disableTopicCreation
+      value: "true"
+
+scopes:
+  - {{ .Values.apps.backend }}
+  - {{ .Values.apps.recurring }}
+  - {{ .Values.apps.notification }}

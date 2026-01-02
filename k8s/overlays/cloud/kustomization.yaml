@@ -1,0 +1,115 @@
+# ========================================================================
+# Cloud Production Overlay for OKE
+# ========================================================================
+# This kustomization overlay configures the application for production
+# deployment on Oracle Kubernetes Engine (OKE) with:
+# - Redpanda Cloud Kafka
+# - OCI Object Storage for persistence
+# - Production resource limits
+# - TLS/HTTPS configuration
+#
+# Apply with: kubectl apply -k k8s/overlays/cloud
+# ========================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: todo-app
+
+resources:
+  - ../../base
+  - ../../networking/ingress.yaml
+
+images:
+  - name: localhost:5000/taskflow-backend
+    newName: ghcr.io/taskflow/taskflow-backend
+    newTag: latest
+  - name: localhost:5000/taskflow-frontend
+    newName: ghcr.io/taskflow/taskflow-frontend
+    newTag: latest
+
+# Replicas for production
+replicas:
+  - name: taskflow-backend
+    replica: 3
+  - name: taskflow-frontend
+    replica: 2
+
+# Resource limits for production
+patches:
+  - target:
+      kind: Deployment
+      name: taskflow-backend
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: taskflow-backend-hpa
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20
+
+configMapGenerator:
+  - name: taskflow-config
+    behavior: replace
+    literals:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=info
+      - DATABASE_URL=$(DB_URL)
+      - KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS)
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - DAPR_HTTP_PORT=3500
+      - DAPR_GRPC_PORT=50001
+
+secretGenerator:
+  - name: taskflow-secrets
+    behavior: replace
+    literals:
+      - GEMINI_API_KEY=$(GEMINI_API_KEY)
+      - DATABASE_URL=$(DB_URL)
+      - KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS)
+      - KAFKA_USERNAME=$(KAFKA_USERNAME)
+      - KAFKA_PASSWORD=$(KAFKA_PASSWORD)
+      - REDIS_PASSWORD=$(REDIS_PASSWORD)
+    options:
+      disableNameSuffixHash: true
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+vars:
+  - name: DB_URL
+    objref:
+      kind: Secret
+      name: taskflow-secrets
+      apiVersion: v1
+    fieldref:
+      fieldpath: data.DATABASE_URL
+  - name: KAFKA_BOOTSTRAP_SERVERS
+    objref:
+      kind: Secret
+      name: taskflow-secrets
+      apiVersion: v1
+    fieldref:
+      fieldpath: data.KAFKA_BOOTSTRAP_SERVERS

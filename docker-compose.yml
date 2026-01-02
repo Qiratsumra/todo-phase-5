@@ -1,0 +1,172 @@
+version: '3.8'
+
+services:
+  # Backend API Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: todo-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SQLALCHEMY_DATABASE_URL=postgresql://neondb_owner:npg_RIco8JekpLS7@ep-lucky-scene-a4xxxdy9-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - GEMINI_API_KEY=AIzaSyBRV6Z_Pyo5T5dlkmuDdcNYUqmjkiysr5s
+      - ENABLE_FALLBACK=true
+      - FALLBACK_MODE=smart
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_REQUESTS=5
+      - RATE_LIMIT_WINDOW=120
+      - MAX_TOKENS_PER_REQUEST=500
+      - PORT=8000
+      - LOG_LEVEL=info
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
+      - ENVIRONMENT=development
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    container_name: todo-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://neondb_owner:npg_RIco8JekpLS7@ep-lucky-scene-a4xxxdy9-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Notification Service (requires Dapr)
+  notification-service:
+    build:
+      context: ./backend/services/notification
+      dockerfile: Dockerfile
+    container_name: todo-notification
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+      - LOG_LEVEL=info
+      - ENVIRONMENT=development
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - with-services
+
+  # Recurring Task Service (requires Dapr)
+  recurring-task-service:
+    build:
+      context: ./backend/services/recurring_task
+      dockerfile: Dockerfile
+    container_name: todo-recurring
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - LOG_LEVEL=info
+      - ENVIRONMENT=development
+      - BACKEND_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - with-services
+
+  # Zookeeper (required for Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: todo-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - todo-network
+    profiles:
+      - kafka
+
+  # Kafka Message Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: todo-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - kafka
+
+  # Kafka UI (optional, for development)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: todo-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - todo-network
+    profiles:
+      - kafka
+
+networks:
+  todo-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

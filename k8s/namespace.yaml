@@ -1,0 +1,11 @@
+# Kubernetes Namespace for Todo Application
+# Creates isolated environment for all todo-app resources
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: todo-app
+  labels:
+    name: todo-app
+    app: taskflow
+    environment: production

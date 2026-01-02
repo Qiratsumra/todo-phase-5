@@ -1,0 +1,186 @@
+# ========================================================================
+# Kubernetes Ingress Configuration for TaskFlow
+# ========================================================================
+# This configures Ingress with TLS termination using cert-manager.
+#
+# Apply with: kubectl apply -f k8s/networking/ingress.yaml
+# Requires: cert-manager for automatic TLS certificate provisioning
+# ========================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: taskflow-ingress
+  namespace: todo-app
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: dns01
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Request-ID: $req_id";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+spec:
+  tls:
+    - hosts:
+        - ${{ secrets.DOMAIN_NAME }}
+        - www.${{ secrets.DOMAIN_NAME }}
+      secretName: taskflow-tls-secret
+  rules:
+    - host: ${{ secrets.DOMAIN_NAME }}
+      http:
+        paths:
+          # Frontend routes
+          - path: /assets
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-frontend
+                port:
+                  number: 80
+          - path: /_next
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-frontend
+                port:
+                  number: 80
+          - path: /api/health
+            pathType: Exact
+            backend:
+              service:
+                name: taskflow-backend
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-backend
+                port:
+                  number: 80
+          # Frontend catch-all (must be last)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-frontend
+                port:
+                  number: 80
+    - host: www.${{ secrets.DOMAIN_NAME }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taskflow-frontend
+                port:
+                  number: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: taskflow-frontend
+  namespace: todo-app
+  labels:
+    app: taskflow-frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app: taskflow-frontend
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: taskflow-frontend-hpa
+  namespace: todo-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: taskflow-frontend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+apiVersion: v1
+kind: Deployment
+metadata:
+  name: taskflow-frontend
+  namespace: todo-app
+  labels:
+    app: taskflow-frontend
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: taskflow-frontend
+  template:
+    metadata:
+      labels:
+        app: taskflow-frontend
+        version: v1
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/taskflow/taskflow-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "https://${{ secrets.DOMAIN_NAME }}/api"
+            - name: NODE_ENV
+              value: "production"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5

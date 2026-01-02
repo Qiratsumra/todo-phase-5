@@ -1,0 +1,64 @@
+# Dapr State Store Component for PostgreSQL
+# This component provides state management for conversation history and caching
+# Used for: conversation state, task metadata caching, rate limiting counters
+
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+  namespace: todo-app
+spec:
+  type: state.postgresql
+  version: v1
+  metadata:
+    # PostgreSQL connection string
+    # Uses Dapr secrets for credential management
+    # Local: postgresql://postgres:postgres@localhost:5432/taskflow
+    # Production: postgresql://user:password@host:5432/database
+    - name: connectionString
+      value: "postgresql://postgres:postgres@host.docker.internal:5432/taskflow"
+
+    # Database name
+    - name: databaseName
+      value: "taskflow"
+
+    # Table name for state storage
+    - name: tableName
+      value: "dapr_state"
+
+    # Timeout for database operations (in milliseconds)
+    - name: timeoutInMilliseconds
+      value: "5000"
+
+    # Maximum number of connections in pool
+    - name: maxConns
+      value: "10"
+
+    # Connection pool configuration
+    - name: connectionMaxAge
+      value: "3600"  # 1 hour
+
+    # Enable encryption at rest (for sensitive data)
+    - name: encryptionKey
+      value: "${STATE_ENCRYPTION_KEY}"
+
+    # Cleanup interval for expired state (in seconds)
+    - name: cleanupInterval
+      value: "3600"  # 1 hour
+
+    # State key format prefix
+    # Keys will be prefixed with this value
+    - name: keyPrefix
+      value: "taskflow"
+
+# Actor state store configuration (if using Dapr Actors)
+# Uncomment if implementing actor-based state management
+# metadata:
+#   - name: actorTypeStore
+#     value: "true"
+
+# Scopes define which applications can use this component
+scopes:
+  - backend-api
+  - recurring-task-service
+  - notification-service

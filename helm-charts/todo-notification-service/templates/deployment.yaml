@@ -1,32 +1,41 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "todo-backend.fullname" . }}
+  name: {{ include "todo-notification-service.fullname" . }}
   labels:
-    {{- include "todo-backend.labels" . | nindent 4 }}
+    {{- include "todo-notification-service.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "todo-backend.selectorLabels" . | nindent 6 }}
+      {{- include "todo-notification-service.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
-        {{- if .Values.dapr.enabled }}
         dapr.io/enabled: "true"
         dapr.io/app-id: "{{ .Values.dapr.appId }}"
         dapr.io/app-port: "{{ .Values.dapr.appPort }}"
         dapr.io/http-port: "{{ .Values.dapr.httpPort }}"
         dapr.io/grpc-port: "{{ .Values.dapr.grpcPort }}"
         dapr.io/log-level: "{{ .Values.dapr.logLevel }}"
+        dapr.io/config: "{{ .Values.dapr.config }}"
+        dapr.io/sidecar-image: "{{ .Values.dapr.sidecarImage.repository }}:{{ .Values.dapr.sidecarImage.tag }}"
+        dapr.io/sidecar-cpu-limit: "{{ .Values.dapr.resources.limits.cpu }}"
+        dapr.io/sidecar-memory-limit: "{{ .Values.dapr.resources.limits.memory }}"
+        dapr.io/sidecar-cpu-request: "{{ .Values.dapr.resources.requests.cpu }}"
+        dapr.io/sidecar-memory-request: "{{ .Values.dapr.resources.requests.memory }}"
+        {{- if .Values.subscription.enabled }}
+        dapr.io/subscribe: {{ printf "[{\"pubsubname\":\"%s\",\"topic\":\"%s\",\"route\":\"%s\"},{\"pubsubname\":\"%s\",\"topic\":\"%s\",\"route\":\"%s\"}]" .Values.daprComponents.pubsub .Values.subscription.topic .Values.subscription.routes.reminderTriggered .Values.daprComponents.pubsub .Values.subscription.topic .Values.subscription.routes.reminderSent | squote }}
         {{- end }}
+        dapr.io/sentry-address: "dapr-sentry.default.svc.cluster.local:50001"
+        dapr.io/metrics-port: "9090"
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "todo-backend.labels" . | nindent 8 }}
+        {{- include "todo-notification-service.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -35,7 +44,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "todo-backend.serviceAccountName" . }}
+      serviceAccountName: {{ include "todo-notification-service.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -57,14 +66,20 @@ spec:
               value: "{{ .Values.config.port }}"
             - name: LOG_LEVEL
               value: "{{ .Values.config.logLevel }}"
-            - name: CORS_ORIGINS
-              value: "{{ .Values.config.corsOrigins }}"
-            {{- if .Values.dapr.enabled }}
             - name: DAPR_HTTP_PORT
               value: "{{ .Values.dapr.httpPort }}"
             - name: DAPR_GRPC_PORT
               value: "{{ .Values.dapr.grpcPort }}"
-            {{- end }}
+            - name: WEBSOCKET_ENABLED
+              value: "{{ .Values.websocket.enabled | quote }}"
+            - name: WEBSOCKET_PATH
+              value: "{{ .Values.websocket.path }}"
+            - name: WEBSOCKET_MAX_CONNECTIONS
+              value: "{{ .Values.websocket.maxConnections | quote }}"
+            - name: WEBSOCKET_HEARTBEAT_INTERVAL
+              value: "{{ .Values.websocket.heartbeatInterval | quote }}"
+            - name: WEBSOCKET_PING_TIMEOUT
+              value: "{{ .Values.websocket.pingTimeout | quote }}"
             {{- if .Values.secrets.enabled }}
             - name: SQLALCHEMY_DATABASE_URL
               valueFrom:
@@ -76,17 +91,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.name }}
                   key: DATABASE_URL
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: GEMINI_API_KEY
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: OPENAI_API_KEY
-                  optional: true
             {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:

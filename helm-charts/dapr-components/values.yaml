@@ -1,0 +1,66 @@
+# Default values for Dapr components
+
+# Namespace for Dapr components
+namespace: default
+
+# Application names that can use these components
+apps:
+  backend: taskflow-backend
+  recurring: taskflow-recurring
+  notification: taskflow-notification
+
+# Kafka Pub/Sub Configuration
+kafka:
+  # Local: Strimzi Kafka on Minikube
+  # Production: Redpanda Cloud Serverless
+  brokers:
+    local: "my-cluster-kafka-bootstrap.kafka:9092"
+    cloud: "your-redpanda-cluster.redpanda.cloud:9092"
+
+  # Set to "local" or "cloud"
+  environment: "local"
+
+  # Consumer group
+  consumerGroup: "taskflow-consumer-group"
+
+  # Authentication type: "none" for local, "sasl" for production
+  authType: "none"
+
+  # SASL credentials (for production Redpanda Cloud)
+  saslUsername: ""
+  saslPassword: ""
+  saslMechanism: "SCRAM-SHA-256"
+
+  # TLS (for production)
+  tlsEnabled: "false"
+
+  # Replication factor: 1 for local, 3 for production
+  replicationFactor: "1"
+
+  # Queue name
+  queueName: "taskflow-queue"
+
+# PostgreSQL State Store Configuration
+postgresql:
+  # Connection string
+  connectionString:
+    local: "postgresql://postgres:postgres@host.docker.internal:5432/taskflow"
+    cloud: "postgresql://user:password@postgresql-service:5432/taskflow"
+
+  # Set to "local" or "cloud"
+  environment: "local"
+
+  databaseName: "taskflow"
+  tableName: "dapr_state"
+  timeoutMs: "5000"
+  maxConns: "10"
+  connectionMaxAge: "3600"
+
+  # Encryption key for state at rest
+  encryptionKey: ""
+
+  # Cleanup interval (seconds)
+  cleanupInterval: "3600"
+
+  # Key prefix
+  keyPrefix: "taskflow"

@@ -1,0 +1,35 @@
+# Dapr State Store Component using PostgreSQL (Docker Compose)
+# This component enables state management for services
+
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.postgresql
+  version: v1
+  metadata:
+    # PostgreSQL connection string for Docker
+    - name: connectionString
+      value: "host=postgres user=postgres password=Qir@t_S2eed123 port=5432 database=postgres sslmode=disable TimeZone=UTC"
+
+    # Table name for state storage
+    - name: tableName
+      value: "dapr_state"
+
+    # Metadata table name
+    - name: metadataTableName
+      value: "dapr_metadata"
+
+    # Timeout for operations
+    - name: timeout
+      value: "20"
+
+    # Cleanup interval (in seconds)
+    - name: cleanupIntervalInSeconds
+      value: "3600"
+
+scopes:
+  - backend-api
+  - recurring-task-service
+  - notification-service

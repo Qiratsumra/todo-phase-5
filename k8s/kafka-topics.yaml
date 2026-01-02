@@ -1,0 +1,73 @@
+# ========================================================================
+# Kafka Topics for TaskFlow Application
+# ========================================================================
+# This manifest creates Kafka topics for event-driven architecture:
+# - task-events: Task lifecycle events (created, updated, completed, deleted)
+# - reminders: Reminder scheduling and delivery events
+# - task-updates: Real-time task update notifications
+#
+# Apply with: kubectl apply -f k8s/kafka-topics.yaml
+# ========================================================================
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task-events
+  namespace: strimzi
+  labels:
+    app.kubernetes.io/name: kafka-topics
+spec:
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: 604800000  # 7 days
+    cleanup.policy: delete
+    min.insync.replicas: 1
+
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: reminders
+  namespace: strimzi
+  labels:
+    app.kubernetes.io/name: kafka-topics
+spec:
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: 259200000  # 3 days
+    cleanup.policy: delete
+    min.insync.replicas: 1
+
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task-updates
+  namespace: strimzi
+  labels:
+    app.kubernetes.io/name: kafka-topics
+spec:
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: 86400000  # 1 day
+    cleanup.policy: delete
+    min.insync.replicas: 1
+
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: audit-events
+  namespace: strimzi
+  labels:
+    app.kubernetes.io/name: kafka-topics
+spec:
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: 2592000000  # 30 days
+    cleanup.policy: delete
+    min.insync.replicas: 1

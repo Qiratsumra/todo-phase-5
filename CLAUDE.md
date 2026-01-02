@@ -208,3 +208,10 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
+
+## Active Technologies
+- Python 3.11 (Backend services, Recurring Task Service, Notification Service), TypeScript (Next.js Frontend) + FastAPI 0.109, Dapr SDK for Python, google-generativeai, next.js, sqlalchemy, alembic (001-phase-v-cloud-deployment)
+- PostgreSQL via Dapr state.postgresql component, Kafka (Strimzi local, Redpanda Cloud production) (001-phase-v-cloud-deployment)
+
+## Recent Changes
+- 001-phase-v-cloud-deployment: Added Python 3.11 (Backend services, Recurring Task Service, Notification Service), TypeScript (Next.js Frontend) + FastAPI 0.109, Dapr SDK for Python, google-generativeai, next.js, sqlalchemy, alembic

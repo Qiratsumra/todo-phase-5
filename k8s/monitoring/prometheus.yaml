@@ -1,0 +1,248 @@
+# ========================================================================
+# Prometheus Configuration for TaskFlow
+# ========================================================================
+# This configures Prometheus to scrape TaskFlow metrics.
+#
+# Apply with: kubectl apply -f k8s/monitoring/prometheus.yaml
+# ========================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'taskflow-oke'
+        env: 'production'
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: []
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # TaskFlow Backend
+      - job_name: 'taskflow-backend'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - todo-app
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+
+      # Dapr sidecars
+      - job_name: 'dapr'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - todo-app
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_dapr_io_enable]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_dapr_io_config]
+            action: replace
+            target_label: dapr_config
+
+      # Redis metrics
+      - job_name: 'redis'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - todo-app
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: redis
+
+      # PostgreSQL metrics (via postgres-exporter)
+      - job_name: 'postgresql'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - todo-app
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: postgres
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: taskflow-prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 2
+  serviceAccountName: prometheus
+  serviceMonitorSelector:
+    matchLabels:
+      team: taskflow
+  ruleSelector:
+    matchLabels:
+      role: alert-rules
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  storage:
+    volumeClaimTemplate:
+      spec:
+        resources:
+          requests:
+            storage: 10Gi
+  retention: 15d
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: monitoring
+  labels:
+    role: alert-rules
+data:
+  taskflow-alerts.yml: |
+    groups:
+      - name: taskflow-alerts
+        rules:
+          # High-level alerts for TaskFlow
+
+          - alert: TaskFlowBackendDown
+            expr: up{job="taskflow-backend"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "TaskFlow backend is down"
+              description: "TaskFlow backend has been down for more than 1 minute"
+
+          - alert: TaskFlowHighErrorRate
+            expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High error rate in TaskFlow backend"
+              description: "Error rate is {{ $value }} requests/second"
+
+          - alert: TaskFlowHighLatency
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High latency in TaskFlow backend"
+              description: "p95 latency is {{ $value }} seconds"
+
+          - alert: TaskFlowHighMemoryUsage
+            expr: (container_memory_usage_bytes{pod=~"taskflow-backend.*"} / container_spec_memory_limit_bytes{pod=~"taskflow-backend.*"}) > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage in TaskFlow backend"
+              description: "Memory usage is {{ $value | humanize1024 }}"
+
+          - alert: TaskFlowHighCPUUsage
+            expr: (rate(container_cpu_usage_seconds_total{pod=~"taskflow-backend.*"}[5m]) / container_spec_cpu_quota{pod=~"taskflow-backend.*"}/container_spec_cpu_period{pod=~"taskflow-backend.*"}) > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage in TaskFlow backend"
+              description: "CPU usage is {{ $value | humanizePercentage }}"
+
+          - alert: TaskFlowPodNotReady
+            expr: kube_pod_status_ready{namespace="todo-app",pod=~"taskflow-.*",condition="true"} == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "TaskFlow pod not ready"
+              description: "Pod {{ $labels.pod }} has been not ready for more than 5 minutes"
+
+          - alert: TaskFlowPodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total{namespace="todo-app"}[5m]) > 3
+            labels:
+              severity: critical
+            annotations:
+              summary: "TaskFlow pod crash looping"
+              description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in 5 minutes"
+
+          # Dapr alerts
+
+          - alert: DaprSidecarDown
+            expr: dapr_sidecar_status{job="taskflow-backend"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Dapr sidecar is down"
+              description: "Dapr sidecar for taskflow-backend has been down for more than 2 minutes"
+
+          # Kafka alerts
+
+          - alert: KafkaConsumerLagHigh
+            expr: kafka_consumer_group_lag > 1000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kafka consumer lag is high"
+              description: "Consumer lag for {{ $labels.consumer_group }} is {{ $value }}"

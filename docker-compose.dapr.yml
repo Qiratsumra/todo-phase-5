@@ -1,0 +1,92 @@
+version: '3.8'
+
+# Docker Compose configuration for running services with Dapr sidecars
+# This extends the base docker-compose.yml with Dapr-enabled services
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dapr.yml up
+
+services:
+  # Dapr placement service (required for actors)
+  dapr-placement:
+    image: daprio/dapr:1.14.0
+    container_name: dapr-placement
+    command: ["./placement", "-port", "50006"]
+    ports:
+      - "50006:50006"
+    networks:
+      - todo-network
+
+  # Backend API with Dapr sidecar
+  backend-dapr:
+    image: daprio/daprd:1.14.0
+    container_name: backend-dapr
+    command:
+      [
+        "./daprd",
+        "-app-id", "backend-api",
+        "-app-port", "8000",
+        "-dapr-http-port", "3500",
+        "-dapr-grpc-port", "50001",
+        "-placement-host-address", "dapr-placement:50006",
+        "-components-path", "/components",
+        "-config", "/config/dapr-config.yaml"
+      ]
+    volumes:
+      - ./dapr-components:/components
+      - ./dapr-config:/config
+    depends_on:
+      - backend
+      - dapr-placement
+      - kafka
+    network_mode: "service:backend"
+
+  # Notification Service with Dapr sidecar
+  notification-dapr:
+    image: daprio/daprd:1.14.0
+    container_name: notification-dapr
+    command:
+      [
+        "./daprd",
+        "-app-id", "notification-service",
+        "-app-port", "8002",
+        "-dapr-http-port", "3502",
+        "-dapr-grpc-port", "50002",
+        "-placement-host-address", "dapr-placement:50006",
+        "-components-path", "/components",
+        "-config", "/config/dapr-config.yaml"
+      ]
+    volumes:
+      - ./dapr-components:/components
+      - ./dapr-config:/config
+    depends_on:
+      - notification-service
+      - dapr-placement
+      - kafka
+    network_mode: "service:notification-service"
+
+  # Recurring Task Service with Dapr sidecar
+  recurring-dapr:
+    image: daprio/daprd:1.14.0
+    container_name: recurring-dapr
+    command:
+      [
+        "./daprd",
+        "-app-id", "recurring-task-service",
+        "-app-port", "8001",
+        "-dapr-http-port", "3501",
+        "-dapr-grpc-port", "50003",
+        "-placement-host-address", "dapr-placement:50006",
+        "-components-path", "/components",
+        "-config", "/config/dapr-config.yaml"
+      ]
+    volumes:
+      - ./dapr-components:/components
+      - ./dapr-config:/config
+    depends_on:
+      - recurring-task-service
+      - dapr-placement
+      - kafka
+    network_mode: "service:recurring-task-service"
+
+networks:
+  todo-network:
+    external: true

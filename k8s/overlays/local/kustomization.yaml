@@ -1,0 +1,63 @@
+# ========================================================================
+# Local Development Overlay for Minikube
+# ========================================================================
+# This kustomization overlay configures the application for local Minikube
+# development with appropriate resource limits and image pull policies.
+#
+# Apply with: kubectl apply -k k8s/overlays/local
+# ========================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: todo-app
+
+resources:
+  - ../../base
+
+images:
+  - name: localhost:5000/taskflow-backend
+    newName: taskflow-backend
+    newTag: latest
+  - name: localhost:5000/taskflow-frontend
+    newName: taskflow-frontend
+    newTag: latest
+
+patches:
+  - target:
+      kind: Deployment
+      name: taskflow-backend
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  - target:
+      kind: Deployment
+      name: taskflow-frontend
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+configMapGenerator:
+  - name: taskflow-config
+    literals:
+      - ENVIRONMENT
+      - DEBUG=local=true
+      - LOG_LEVEL=debug
+
+secretGenerator:
+  - name: taskflow-secrets
+    literals:
+      - GEMINI_API_KEY=your-gemini-api-key-here
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/taskflow
+      - KAFKA_BOOTSTRAP_SERVERS=my-cluster-kafka-bootstrap:9092
+    options:
+      disableNameSuffixHash: true

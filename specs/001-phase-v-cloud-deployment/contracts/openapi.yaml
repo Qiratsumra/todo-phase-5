@@ -1,0 +1,774 @@
+openapi: 3.0.3
+info:
+  title: TaskFlow API - Phase V Advanced Cloud Deployment
+  description: |
+    REST API for the TaskFlow Todo Chatbot with advanced features including
+    recurring tasks, reminders, priorities, tags, and search/filter/sort capabilities.
+    Implements event-driven architecture using Dapr Pub/Sub for Kafka integration.
+  version: 5.0.0
+  contact:
+    name: TaskFlow Development Team
+    url: https://github.com/your-org/todo-hackathon02-phase-05
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.taskflow.your-domain.com
+    description: Production server
+
+tags:
+  - name: Tasks
+    description: Task CRUD and management operations
+  - name: Chat
+    description: Gemini chatbot integration
+  - name: Reminders
+    description: Reminder scheduling and management
+  - name: Health
+    description: Health check and monitoring endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns overall system health status including database and Kafka connectivity
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/live:
+    get:
+      tags:
+        - Health
+      summary: Liveness probe
+      description: Simple liveness check for Kubernetes
+      responses:
+        '200':
+          description: Service is alive
+
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness probe
+      description: Checks if service is ready to accept traffic
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+
+  /api/tasks:
+    get:
+      tags:
+        - Tasks
+      summary: List tasks
+      description: Retrieve a list of tasks with optional filtering, sorting, and pagination
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, completed]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high]
+        - name: tags
+          in: query
+          schema:
+            type: string
+            description: Comma-separated tags (e.g., "work,urgent")
+        - name: due_before
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: due_after
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [due_date, priority, created_at, updated_at]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    post:
+      tags:
+        - Tasks
+      summary: Create task
+      description: Create a new task with optional recurrence, priority, tags, and reminder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/tasks/{task_id}:
+    get:
+      tags:
+        - Tasks
+      summary: Get task by ID
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Task found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Tasks
+      summary: Update task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Delete task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Task deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/tasks/{task_id}/complete:
+    post:
+      tags:
+        - Tasks
+      summary: Complete task
+      description: Mark a task as completed. If task has recurrence, the next occurrence will be created.
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Task completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/tasks/{task_id}/priority:
+    put:
+      tags:
+        - Tasks
+      summary: Update task priority
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - priority
+              properties:
+                priority:
+                  type: string
+                  enum: [low, medium, high]
+      responses:
+        '200':
+          description: Priority updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/tasks/{task_id}/tags:
+    post:
+      tags:
+        - Tasks
+      summary: Add tags to task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tags
+              properties:
+                tags:
+                  type: array
+                  items:
+                    type: string
+                    example: "work"
+      responses:
+        '200':
+          description: Tags added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Remove tags from task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tags
+              properties:
+                tags:
+                  type: array
+                  items:
+                    type: string
+                    example: "work"
+      responses:
+        '200':
+          description: Tags removed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/tasks/search:
+    post:
+      tags:
+        - Tasks
+      summary: Search tasks
+      description: Advanced search with natural language query and filters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /api/chat:
+    post:
+      tags:
+        - Chat
+      summary: Chat with Gemini
+      description: Send a message to the Gemini-powered chatbot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/reminders:
+    get:
+      tags:
+        - Reminders
+      summary: List reminders
+      parameters:
+        - name: task_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, sent, failed, cancelled]
+      responses:
+        '200':
+          description: List of reminders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Reminder'
+
+    post:
+      tags:
+        - Reminders
+      summary: Create reminder
+      description: Schedule a reminder for a task using Dapr Jobs API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReminderRequest'
+      responses:
+        '201':
+          description: Reminder created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/reminders/{reminder_id}:
+    delete:
+      tags:
+        - Reminders
+      summary: Cancel reminder
+      parameters:
+        - name: reminder_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Reminder cancelled successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/jobs/trigger:
+    post:
+      tags:
+        - Reminders
+      summary: Dapr Jobs API callback
+      description: Callback endpoint for Dapr Jobs API when a reminder job fires
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    task_id:
+                      type: integer
+                    user_id:
+                      type: integer
+                    type:
+                      type: string
+      responses:
+        '200':
+          description: Job processed successfully
+
+components:
+  schemas:
+    Task:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+        title:
+          type: string
+          example: "Weekly team meeting"
+        description:
+          type: string
+          example: "Discuss project updates"
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-12-30T09:00:00Z"
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly]
+          example: "weekly"
+        priority:
+          type: string
+          enum: [low, medium, high]
+          example: "high"
+        tags:
+          type: array
+          items:
+            type: string
+            example: "work"
+          example: ["work", "meeting"]
+        status:
+          type: string
+          enum: [pending, completed]
+          example: "pending"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-12-29T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-12-29T10:00:00Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        parent_task_id:
+          type: integer
+          nullable: true
+          example: 122
+        reminder_offset:
+          type: string
+          nullable: true
+          example: "1 day"
+
+    CreateTaskRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: "Weekly team meeting"
+        description:
+          type: string
+          maxLength: 10000
+          default: ""
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly]
+          default: "none"
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: "medium"
+        tags:
+          type: array
+          items:
+            type: string
+            pattern: '^#'
+          default: []
+        reminder_offset:
+          type: string
+          nullable: true
+          enum: [15 minutes, 30 minutes, 1 hour, 2 hours, 1 day, 2 days, 1 week]
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 10000
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly]
+        priority:
+          type: string
+          enum: [low, medium, high]
+        tags:
+          type: array
+          items:
+            type: string
+            pattern: '^#'
+
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Natural language search query
+          example: "high priority work tasks due this week"
+        filters:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [pending, completed]
+            priority:
+              type: string
+              enum: [low, medium, high]
+            tags:
+              type: array
+              items:
+                type: string
+            due_before:
+              type: string
+              format: date-time
+            due_after:
+              type: string
+              format: date-time
+        sort_by:
+          type: string
+          enum: [due_date, priority, created_at]
+        order:
+          type: string
+          enum: [asc, desc]
+          default: asc
+        limit:
+          type: integer
+          default: 50
+          maximum: 100
+        offset:
+          type: integer
+          default: 0
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        total_count:
+          type: integer
+          example: 42
+
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Create a weekly task for team meetings"
+        conversation_id:
+          type: string
+          nullable: true
+
+    ChatResponse:
+      type: object
+      properties:
+        response:
+          type: string
+          example: "I've created a recurring task 'Weekly team meeting' due every Monday at 9:00 AM."
+        conversation_id:
+          type: string
+          example: "conv-123"
+
+    Reminder:
+      type: object
+      properties:
+        id:
+          type: integer
+        task_id:
+          type: integer
+        user_id:
+          type: integer
+        scheduled_at:
+          type: string
+          format: date-time
+        reminder_type:
+          type: string
+          example: "websocket"
+        status:
+          type: string
+          enum: [pending, sent, failed, cancelled]
+        retry_count:
+          type: integer
+        dapr_job_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateReminderRequest:
+      type: object
+      required:
+        - task_id
+        - reminder_offset
+      properties:
+        task_id:
+          type: integer
+        reminder_offset:
+          type: string
+          description: Time before due date (e.g., "1 day", "1 hour")
+          enum: [15 minutes, 30 minutes, 1 hour, 2 hours, 1 day, 2 days, 1 week]
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [connected, disconnected]
+            kafka:
+              type: string
+              enum: [connected, disconnected]
+        version:
+          type: string
+          example: "5.0.0"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Rate limit exceeded"
+        message:
+          type: string
+          example: "Too many requests. Please wait before trying again."
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Not Found"
+              message:
+                type: string
+                example: "Task with ID 123 not found"
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,49 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "dapr-components.labels" . | nindent 4 }}
+spec:
+  type: state.postgresql
+  version: v1
+  metadata:
+    {{- if eq .Values.postgresql.environment "cloud" }}
+    - name: connectionString
+      value: {{ .Values.postgresql.connectionString.cloud | quote }}
+    {{- else }}
+    - name: connectionString
+      value: {{ .Values.postgresql.connectionString.local | quote }}
+    {{- end }}
+
+    - name: databaseName
+      value: {{ .Values.postgresql.databaseName | quote }}
+
+    - name: tableName
+      value: {{ .Values.postgresql.tableName | quote }}
+
+    - name: timeoutInMilliseconds
+      value: {{ .Values.postgresql.timeoutMs | quote }}
+
+    - name: maxConns
+      value: {{ .Values.postgresql.maxConns | quote }}
+
+    - name: connectionMaxAge
+      value: {{ .Values.postgresql.connectionMaxAge | quote }}
+
+    {{- if .Values.postgresql.encryptionKey }}
+    - name: encryptionKey
+      value: {{ .Values.postgresql.encryptionKey | quote }}
+    {{- end }}
+
+    - name: cleanupInterval
+      value: {{ .Values.postgresql.cleanupInterval | quote }}
+
+    - name: keyPrefix
+      value: {{ .Values.postgresql.keyPrefix | quote }}
+
+scopes:
+  - {{ .Values.apps.backend }}
+  - {{ .Values.apps.recurring }}
+  - {{ .Values.apps.notification }}

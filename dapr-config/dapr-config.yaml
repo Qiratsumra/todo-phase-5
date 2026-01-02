@@ -1,0 +1,52 @@
+# Dapr Configuration for Todo Application
+# This file configures Dapr runtime behavior for local Docker development
+
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: todo-config
+spec:
+  # Tracing configuration (optional, for debugging)
+  tracing:
+    samplingRate: "1"
+    zipkin:
+      endpointAddress: "http://localhost:9411/api/v2/spans"
+
+  # Metrics configuration
+  metric:
+    enabled: true
+
+  # Access control for pub/sub
+  accessControl:
+    defaultAction: allow
+    trustDomain: "public"
+    policies:
+      - appId: backend-api
+        defaultAction: allow
+        operations:
+          - name: /task-events
+            httpVerb: ['POST']
+            action: allow
+          - name: /reminders
+            httpVerb: ['POST']
+            action: allow
+          - name: /task-updates
+            httpVerb: ['POST']
+            action: allow
+
+      - appId: recurring-task-service
+        defaultAction: allow
+        operations:
+          - name: /task-events
+            httpVerb: ['GET', 'POST']
+            action: allow
+
+      - appId: notification-service
+        defaultAction: allow
+        operations:
+          - name: /task-updates
+            httpVerb: ['GET']
+            action: allow
+          - name: /reminders
+            httpVerb: ['GET']
+            action: allow

@@ -1,0 +1,332 @@
+# ========================================================================
+# GitHub Actions CD Workflow for OKE
+# ========================================================================
+# This workflow deploys the application to Oracle Kubernetes Engine.
+#
+# Triggers:
+#   - Push to main branch (after CI passes)
+#   - Manual workflow dispatch with parameters
+#
+# Secrets required:
+#   - OCI_AUTH_TOKEN: Oracle Cloud authentication token
+#   - OCI_USER_OCID: Oracle Cloud user OCID
+#   - OCI_TENANCY_OCID: Oracle Cloud tenancy OCID
+#   - OCI_REGION: Oracle Cloud region
+#   - GEMINI_API_KEY: Application configuration
+#   - KAFKA_BOOTSTRAP_SERVERS: Redpanda Cloud brokers
+#   - KAFKA_USERNAME: Redpanda Cloud username
+#   - KAFKA_PASSWORD: Redpanda Cloud password
+#   - DATABASE_URL: PostgreSQL connection string
+#   - REDIS_PASSWORD: Redis password
+# ========================================================================
+
+name: Deploy to OKE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+      - 'helm-charts/**'
+      - '.github/workflows/deploy-oke.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      force_redeploy:
+        description: 'Force redeploy even if version unchanged'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  OKE_CLUSTER_NAME: taskflow-oke
+  NAMESPACE: todo-app
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # =========================================================================
+  # Pre-deployment checks
+  # =========================================================================
+  pre-deployment:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check changed files
+        id: check
+        run: |
+          CHANGED_K8S=$(git diff --name-only HEAD~1 HEAD | grep -E '^k8s/' | wc -l)
+          CHANGED_HELM=$(git diff --name-only HEAD~1 HEAD | grep -E '^helm-charts/' | wc -l)
+          echo "K8s files changed: $CHANGED_K8S"
+          echo "Helm charts changed: $CHANGED_HELM"
+          if [ "$CHANGED_K8S" -gt 0 ] || [ "$CHANGED_HELM" -gt 0 ] || [ "${{ github.event.inputs.force_redeploy }}" == "true" ]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  # =========================================================================
+  # Configure OCI
+  # =========================================================================
+  configure-oci:
+    name: Configure OCI
+    runs-on: ubuntu-latest
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: |
+          curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash -s -- --install-dir $HOME/oci-cli --accept-all-defaults
+          echo "$HOME/oci-cli/bin" >> $GITHUB_PATH
+
+      - name: Configure OCI
+        run: |
+          oci setup config --user ${{ secrets.OCI_USER_OCID }} \
+            --tenancy ${{ secrets.OCI_TENANCY_OCID }} \
+            --region ${{ secrets.OCI_REGION }} \
+            --generate-file
+        env:
+          OCI_AUTH_TOKEN: ${{ secrets.OCI_AUTH_TOKEN }}
+
+      - name: Get OKE cluster kubeconfig
+        run: |
+          oci ce cluster create-kubeconfig \
+            --cluster-id ${{ secrets.OKE_CLUSTER_OCID }} \
+            --file $HOME/.kube/config \
+            --region ${{ secrets.OCI_REGION }}
+          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
+
+  # =========================================================================
+  # Deploy infrastructure
+  # =========================================================================
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: configure-oci
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ env.KUBECONFIG }}
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy PostgreSQL via Helm
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+          helm upgrade --install postgres bitnami/postgresql \
+            --namespace ${{ env.NAMESPACE }} \
+            --set auth.database=taskflow \
+            --set persistence.size=10Gi \
+            --wait --timeout 5m
+
+      - name: Deploy Redis via Helm
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+          helm upgrade --install redis bitnami/redis \
+            --namespace ${{ env.NAMESPACE }} \
+            --set auth.enabled=true \
+            --set architecture=replication \
+            --wait --timeout 5m
+
+      - name: Deploy Dapr via Helm
+        run: |
+          helm repo add dapr https://dapr.github.io/helm-charts
+          helm repo update
+          helm upgrade --install dapr dapr/dapr \
+            --namespace dapr-system \
+            --create-namespace \
+            --wait --timeout 5m
+
+  # =========================================================================
+  # Deploy Dapr components
+  # =========================================================================
+  deploy-dapr-components:
+    name: Deploy Dapr Components
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ env.KUBECONFIG }}
+
+      - name: Create secrets
+        run: |
+          kubectl create secret generic taskflow-secrets \
+            --namespace ${{ env.NAMESPACE }} \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --from-literal=KAFKA_BOOTSTRAP_SERVERS="${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}" \
+            --from-literal=KAFKA_USERNAME="${{ secrets.KAFKA_USERNAME }}" \
+            --from-literal=KAFKA_PASSWORD="${{ secrets.KAFKA_PASSWORD }}" \
+            --from-literal=REDIS_HOST="redis-master" \
+            --from-literal=REDIS_PORT="6379" \
+            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Kafka pubsub component
+        run: |
+          kubectl apply -f dapr-components/kafka-pubsub.yaml \
+            --namespace ${{ env.NAMESPACE }}
+
+      - name: Deploy PostgreSQL statestore
+        run: |
+          kubectl apply -f dapr-components/statestore.yaml \
+            --namespace ${{ env.NAMESPACE }}
+
+      - name: Deploy Kubernetes secrets
+        run: |
+          kubectl apply -f dapr-components/kubernetes-secrets.yaml \
+            --namespace ${{ env.NAMESPACE }}
+
+  # =========================================================================
+  # Deploy application
+  # =========================================================================
+  deploy-application:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: deploy-dapr-components
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ env.KUBECONFIG }}
+
+      - name: Deploy using Kustomize
+        run: |
+          kubectl apply -k k8s/overlays/cloud \
+            --namespace ${{ env.NAMESPACE }}
+
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/taskflow-backend \
+            --namespace ${{ env.NAMESPACE }} \
+            --timeout=300s
+          kubectl rollout status deployment/taskflow-frontend \
+            --namespace ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+  # =========================================================================
+  # Smoke tests
+  # =========================================================================
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-application
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get frontend LoadBalancer URL
+        run: |
+          FRONTEND_URL=$(kubectl get svc taskflow-frontend \
+            --namespace ${{ env.NAMESPACE }} \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "FRONTEND_URL=https://$FRONTEND_URL" >> $GITHUB_ENV
+
+      - name: Wait for frontend to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -sf "${{ env.FRONTEND_URL }}/health" > /dev/null 2>&1; then
+              echo "Frontend is ready"
+              exit 0
+            fi
+            echo "Waiting for frontend... ($i/30)"
+            sleep 10
+          done
+          echo "Frontend not ready after 5 minutes"
+          exit 1
+
+      - name: Run health check
+        run: |
+          curl -sf "${{ env.FRONTEND_URL }}/health"
+          curl -sf "${{ env.FRONTEND_URL }}/api/health"
+
+      - name: Run smoke test
+        run: |
+          # Test task creation
+          TASK_RESPONSE=$(curl -sf -X POST "${{ env.FRONTEND_URL }}/api/tasks/" \
+            -H "Content-Type: application/json" \
+            -d '{"title": "Smoke test task", "description": "Testing deployment"}')
+          echo "Task created: $TASK_RESPONSE"
+
+          TASK_ID=$(echo "$TASK_RESPONSE" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          echo "Task ID: $TASK_ID"
+
+          # Test task completion
+          curl -sf -X POST "${{ env.FRONTEND_URL }}/api/tasks/$TASK_ID/complete"
+          echo "Smoke test completed successfully"
+
+  # =========================================================================
+  # Post-deployment notification
+  # =========================================================================
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: smoke-tests
+    if: always()
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Send notification
+        if: failure()
+        run: |
+          echo "Deployment failed. Sending notification..."
+          # Add Slack/Teams notification here
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"TaskFlow deployment to OKE failed. Check GitHub Actions for details.\"}"
+
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "Deployment successful. Sending notification..."
+          # Add Slack/Teams notification here
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"TaskFlow successfully deployed to OKE production!\"}"
